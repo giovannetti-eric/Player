@@ -68,6 +68,9 @@ jobs:
 
       - name: Compile
         run: |
+          # upstream's resource script still names the manifest player.xml,
+          # which only MinGW reads; harmless once upstream fixes it
+          sed -i 's/player\.xml/player.manifest/' resources/windows/player.rc.in
           cmake -G Ninja -B build . \
             -DCMAKE_BUILD_TYPE=Release \
             -DPLAYER_TARGET_PLATFORM=SDL2 \
@@ -78,8 +81,8 @@ jobs:
       - name: Package with its DLLs
         run: |
           mkdir dist
-          cp build/easyrpg-player.exe dist/
-          ldd build/easyrpg-player.exe | awk '$3 ~ /^\/ucrt64\// { print $3 }' | xargs -r cp -t dist/
+          cp build/Player.exe dist/
+          ldd build/Player.exe | awk '$3 ~ /^\/ucrt64\// { print $3 }' | xargs -r cp -t dist/
           cp notes.md dist/PATCHES.md
           ls dist
 
