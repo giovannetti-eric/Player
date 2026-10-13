@@ -71,9 +71,12 @@ jobs:
           # upstream's resource script still names the manifest player.xml,
           # which only MinGW reads; harmless once upstream fixes it
           sed -i 's/player\.xml/player.manifest/' resources/windows/player.rc.in
+          # SDL2main lands after SDL2 on the link line; repeat SDL2 at the end
+          # (this replaces CMake's default list, so the Windows libs are restated)
           cmake -G Ninja -B build . \
             -DCMAKE_BUILD_TYPE=Release \
             -DPLAYER_TARGET_PLATFORM=SDL2 \
+            -DCMAKE_CXX_STANDARD_LIBRARIES="-lSDL2 -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32" \
             -DPLAYER_BUILD_LIBLCF=ON \
             -DPLAYER_VERSION_APPEND="(FF7 Origin, $(date +%Y-%m-%d))"
           cmake --build build
