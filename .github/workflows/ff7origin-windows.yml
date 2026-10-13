@@ -1,0 +1,89 @@
+name: FF7 Origin Windows build
+
+# EasyRPG Player for Windows with the patches FF7 Origin needs that upstream
+# has not merged yet. Each run merges the branches below onto upstream's
+# current master, so a re-run picks up new commits on either side; a branch
+# that is gone (merged upstream and deleted) is skipped.
+
+on:
+  push:
+    branches: [ff7origin]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM: https://github.com/EasyRPG/Player
+  PATCHES: >-
+    fix/3687-actor-hp-defeat
+    better-aep
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge the patches onto upstream master
+        shell: bash
+        run: |
+          git config user.name "FF7 Origin build"
+          git config user.email "ff7origin-build@users.noreply.github.com"
+          git fetch --no-tags "$UPSTREAM" master
+          git merge --no-edit FETCH_HEAD
+          {
+            echo "Upstream master: $(git rev-parse --short FETCH_HEAD)"
+            for branch in $PATCHES; do
+              if git fetch --no-tags origin "$branch"; then
+                git merge --no-edit FETCH_HEAD
+                echo "- $branch: $(git rev-parse --short FETCH_HEAD)"
+              else
+                echo "- $branch: not found, skipped"
+              fi
+            done
+          } | tee notes.md
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          pacboy: >-
+            gcc:p cmake:p ninja:p pkgconf:p
+            SDL2:p icu:p expat:p libpng:p pixman:p fmt:p freetype:p harfbuzz:p
+            nlohmann-json:p mpg123:p libsndfile:p libvorbis:p opusfile:p speexdsp:p
+
+      - name: Optional dependencies
+        run: |
+          for pkg in libinih libxmp wildmidi; do
+            pacman -S --needed --noconfirm "$MINGW_PACKAGE_PREFIX-$pkg" || echo "$pkg unavailable"
+          done
+
+      - name: Compile
+        run: |
+          cmake -G Ninja -B build . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPLAYER_TARGET_PLATFORM=SDL2 \
+            -DPLAYER_BUILD_LIBLCF=ON \
+            -DPLAYER_VERSION_APPEND="(FF7 Origin, $(date +%Y-%m-%d))"
+          cmake --build build
+
+      - name: Package with its DLLs
+        run: |
+          mkdir dist
+          cp build/easyrpg-player.exe dist/
+          ldd build/easyrpg-player.exe | awk '$3 ~ /^\/ucrt64\// { print $3 }' | xargs -r cp -t dist/
+          cp notes.md dist/PATCHES.md
+          ls dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easyrpg-player-ff7origin-windows
+          path: dist
