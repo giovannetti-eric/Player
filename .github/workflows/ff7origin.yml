@@ -1,0 +1,169 @@
+name: FF7 Origin build
+
+# EasyRPG Player for Windows and macOS with the patches FF7 Origin needs that
+# upstream has not merged yet. Each run merges the branches below onto
+# upstream's current master (.github/ff7origin/merge-patches.sh), so a re-run
+# picks up new commits on either side; a branch that is gone (merged upstream
+# and deleted) is skipped.
+
+on:
+  push:
+    branches: [ff7origin]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM: https://github.com/EasyRPG/Player
+  PATCHES: >-
+    fix/3687-actor-hp-defeat
+    better-aep
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge the patches onto upstream master
+        shell: bash
+        run: bash .github/ff7origin/merge-patches.sh
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          pacboy: >-
+            gcc:p cmake:p ninja:p pkgconf:p
+            SDL2:p icu:p expat:p libpng:p pixman:p fmt:p freetype:p harfbuzz:p
+            nlohmann-json:p mpg123:p libsndfile:p libvorbis:p opusfile:p speexdsp:p
+
+      - name: Optional dependencies
+        run: |
+          for pkg in libinih libxmp wildmidi; do
+            pacman -S --needed --noconfirm "$MINGW_PACKAGE_PREFIX-$pkg" || echo "$pkg unavailable"
+          done
+
+      - name: Compile
+        run: |
+          # upstream's resource script still names the manifest player.xml,
+          # which only MinGW reads; harmless once upstream fixes it
+          sed -i 's/player\.xml/player.manifest/' resources/windows/player.rc.in
+          # SDL2main lands after SDL2 on the link line; repeat SDL2 at the end
+          # (this replaces CMake's default list, so the Windows libs are restated)
+          cmake -G Ninja -B build . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPLAYER_TARGET_PLATFORM=SDL2 \
+            -DCMAKE_CXX_STANDARD_LIBRARIES="-lSDL2 -lkernel32 -luser32 -lgdi32 -lwinspool -lshell32 -lole32 -loleaut32 -luuid -lcomdlg32 -ladvapi32" \
+            -DPLAYER_BUILD_LIBLCF=ON \
+            -DPLAYER_VERSION_APPEND="(FF7 Origin, $(date +%Y-%m-%d))"
+          cmake --build build
+
+      - name: Package with its DLLs
+        run: |
+          mkdir dist
+          cp build/Player.exe dist/
+          ldd build/Player.exe | awk '$3 ~ /^\/ucrt64\// { print $3 }' | xargs -r cp -t dist/
+          cp notes.md dist/PATCHES.md
+          ls dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: easyrpg-player-ff7origin-windows
+          path: dist
+
+  macos:
+    # arm64 (Apple silicon) runner; the app is built universal (arm64 and
+    # x86_64), as upstream's own macOS build on ci.easyrpg.org is
+    runs-on: macos-26
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      BUILDSCRIPTS: ${{ github.workspace }}/../buildscripts
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Merge the patches onto upstream master
+        run: bash .github/ff7origin/merge-patches.sh
+
+      # The static universal libraries come from EasyRPG/buildscripts, the
+      # scripts upstream's macOS toolchain job runs. They take a while to
+      # build, so they are cached per buildscripts commit, and saved as soon
+      # as they are built so a later failure does not lose them.
+      - name: Get EasyRPG buildscripts
+        id: buildscripts
+        run: |
+          git clone --depth 1 https://github.com/EasyRPG/buildscripts "$BUILDSCRIPTS"
+          echo "commit=$(git -C "$BUILDSCRIPTS" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the toolchain
+        id: toolchain
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.BUILDSCRIPTS }}/macos/universal
+          key: easyrpg-toolchain-macos-26-${{ steps.buildscripts.outputs.commit }}
+
+      - name: Build the toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: |
+          brew install autoconf automake libtool meson ninja pkgconf
+          cd "$BUILDSCRIPTS/macos"
+          ./0_build_everything.sh
+
+      - name: Save the toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.BUILDSCRIPTS }}/macos/universal
+          key: ${{ steps.toolchain.outputs.cache-primary-key }}
+
+      - name: Compile
+        run: |
+          brew install ninja
+          cmake -G Ninja -B build . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$BUILDSCRIPTS/macos/universal" \
+            -DCMAKE_OSX_SYSROOT=macosx \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.9 \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DPLAYER_BUILD_LIBLCF=ON \
+            -DPLAYER_VERSION_APPEND="(FF7 Origin, $(date +%Y-%m-%d))"
+          cmake --build build
+
+      - name: Test
+        run: cmake --build build --target check
+
+      - name: Package the app
+        run: |
+          app="dist/EasyRPG Player.app"
+          binary="$app/Contents/MacOS/EasyRPG Player"
+          mkdir dist
+          cp -R "build/EasyRPG Player.app" dist/
+          cp notes.md dist/PATCHES.md
+          # ad-hoc signature for the whole bundle (no Developer ID here)
+          codesign --force --sign - "$app"
+          lipo -info "$binary"
+          "$binary" --version
+          # everything but the system must be linked in statically
+          if otool -L "$binary" | grep -v ':$' | grep -v -E '^[[:space:]]+(/usr/lib/|/System/Library/)'; then
+            echo "the Player links a library outside the system"
+            exit 1
+          fi
+          # ditto keeps the executable bit, which the artifact's own zip drops
+          ditto -c -k dist easyrpg-player-ff7origin-macos.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: easyrpg-player-ff7origin-macos.zip
+          archive: false
