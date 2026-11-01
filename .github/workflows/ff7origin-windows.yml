@@ -87,7 +87,6 @@ jobs:
     env:
       HOMEBREW_NO_AUTO_UPDATE: 1
       HOMEBREW_NO_INSTALL_CLEANUP: 1
-      BUILDSCRIPTS: ${{ github.workspace }}/../buildscripts
 
     steps:
       - uses: actions/checkout@v7
@@ -104,6 +103,8 @@ jobs:
       - name: Get EasyRPG buildscripts
         id: buildscripts
         run: |
+          BUILDSCRIPTS="$RUNNER_TEMP/buildscripts"
+          echo "BUILDSCRIPTS=$BUILDSCRIPTS" >> "$GITHUB_ENV"
           git clone --depth 1 https://github.com/EasyRPG/buildscripts "$BUILDSCRIPTS"
           echo "commit=$(git -C "$BUILDSCRIPTS" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
@@ -111,7 +112,7 @@ jobs:
         id: toolchain
         uses: actions/cache/restore@v6
         with:
-          path: ${{ env.BUILDSCRIPTS }}/macos/universal
+          path: ${{ runner.temp }}/buildscripts/macos/universal
           key: easyrpg-toolchain-macos-26-${{ steps.buildscripts.outputs.commit }}
 
       - name: Build the toolchain
@@ -138,7 +139,7 @@ jobs:
         if: steps.toolchain.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
-          path: ${{ env.BUILDSCRIPTS }}/macos/universal
+          path: ${{ runner.temp }}/buildscripts/macos/universal
           key: ${{ steps.toolchain.outputs.cache-primary-key }}
 
       - name: Compile
