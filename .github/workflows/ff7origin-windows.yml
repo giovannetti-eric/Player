@@ -118,6 +118,14 @@ jobs:
         if: steps.toolchain.outputs.cache-hit != 'true'
         run: |
           brew install autoconf automake libtool meson ninja pkgconf
+          # libsdl.org is not always reachable from the runners, and the
+          # easyrpg.org mirror may lack the release: fetch SDL3 from its
+          # GitHub release into the download cache buildscripts reads first
+          export EASYRPG_PATH_DOWNLOADCACHE="$RUNNER_TEMP/downloads"
+          mkdir -p "$EASYRPG_PATH_DOWNLOADCACHE"
+          sdl3=$(sed -n 's/^SDL3_DIR="\(.*\)"$/\1/p' "$BUILDSCRIPTS/shared/packages.sh")
+          curl --fail -sSL -o "$EASYRPG_PATH_DOWNLOADCACHE/$sdl3.tar.gz" \
+            "https://github.com/libsdl-org/SDL/releases/download/release-${sdl3#SDL3-}/$sdl3.tar.gz"
           cd "$BUILDSCRIPTS/macos"
           ./0_build_everything.sh
 
