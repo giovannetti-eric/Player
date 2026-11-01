@@ -126,6 +126,11 @@ jobs:
           sdl3=$(sed -n 's/^SDL3_DIR="\(.*\)"$/\1/p' "$BUILDSCRIPTS/shared/packages.sh")
           curl --fail -sSL -o "$EASYRPG_PATH_DOWNLOADCACHE/$sdl3.tar.gz" \
             "https://github.com/libsdl-org/SDL/releases/download/release-${sdl3#SDL3-}/$sdl3.tar.gz"
+          # buildscripts regenerates libsndfile's configure; Homebrew's
+          # autoconf 2.73 then picks C23, where libsndfile 1.2.2's own
+          # bool/true/false no longer compile. Refusing C23 lets configure
+          # settle on C11, as autoconf 2.72 does.
+          export ac_cv_prog_cc_c23=no
           cd "$BUILDSCRIPTS/macos"
           ./0_build_everything.sh
 
