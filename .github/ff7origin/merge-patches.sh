@@ -12,11 +12,12 @@ git config user.name "FF7 Origin build"
 git config user.email "ff7origin-build@users.noreply.github.com"
 git fetch --no-tags "$UPSTREAM" master
 git merge --no-edit FETCH_HEAD
+# git's own output goes to stderr, so notes.md lists only what was merged
 {
   echo "Upstream master: $(git rev-parse --short FETCH_HEAD)"
   for branch in $PATCHES; do
     if git fetch --no-tags origin "$branch"; then
-      git merge --no-edit FETCH_HEAD
+      git merge --no-edit FETCH_HEAD >&2
       echo "- $branch: $(git rev-parse --short FETCH_HEAD)"
     else
       echo "- $branch: not found, skipped"
